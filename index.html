@@ -231,6 +231,47 @@
       <input type="number" id="reminderDaysBefore" min="0" max="7">
       <span>ימים לפני המשלוח</span>
     </div>
+    <div class="row" style="margin-top:14px;">
+      <label>שעת שליחת התזכורת הראשונה</label>
+      <input type="text" id="reminderSendTime" placeholder="09:00" style="max-width:120px; direction:ltr; text-align:center;">
+    </div>
+    <div class="row">
+      <label>שעת שליחת תזכורת נוספת (אם אין תשובה עד אז)</label>
+      <input type="text" id="followupSendTime" placeholder="11:00" style="max-width:120px; direction:ltr; text-align:center;">
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>⏰ הודעת תזכורת נוספת</h2>
+    <p class="hint">נשלחת אוטומטית ללקוחות שקיבלו את ההודעה הראשונה אך לא הגיבו עד השעה שהוגדרה למעלה.</p>
+    <div class="row">
+      <textarea id="msg_followup"></textarea>
+      <div class="placeholders">{name} {day}</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📣 שליחת עדכון ללקוחות</h2>
+    <p class="hint">שולח הודעה חופשית מיידית ללקוחות פעילים - לדוגמה עדכון על שינוי, חג, או הודעה כללית.</p>
+    <div class="row">
+      <label>שליחה ל-</label>
+      <select id="broadcastDay" class="variant-select" style="color:var(--ink);">
+        <option value="all">כל הלקוחות הפעילים</option>
+        <option value="ראשון">לקוחות יום ראשון בלבד</option>
+        <option value="שני">לקוחות יום שני בלבד</option>
+        <option value="שלישי">לקוחות יום שלישי בלבד</option>
+        <option value="רביעי">לקוחות יום רביעי בלבד</option>
+        <option value="חמישי">לקוחות יום חמישי בלבד</option>
+        <option value="שישי">לקוחות יום שישי בלבד</option>
+        <option value="שבת">לקוחות יום שבת בלבד</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>תוכן ההודעה</label>
+      <textarea id="broadcastMessage" placeholder="לדוגמה: עקב חג, המשלוחים השבוע יתעכבו ביום אחד..."></textarea>
+    </div>
+    <button class="btn-small" style="width:100%; padding:12px;" onclick="sendBroadcast()">שלח עכשיו</button>
+    <div id="broadcastStatus" class="status-msg"></div>
   </div>
 
   <div class="card">
@@ -374,6 +415,13 @@ const VARIANTS = {
     'בסדר {name} 🙏 לא נדרש הפעם, נהיה כאן כתמיד',
     'סבבה {name} ✅ מדלגים על הסבב הזה, נתראה בבא'
   ],
+  msg_followup: [
+    'היי {name}, עדיין מחכים לתשובתך לגבי ההזמנה למשלוח יום {day} 🙏 לסגור הזמנה?',
+    'תזכורת קטנה {name} ⏰ עדיין לא קיבלנו תשובה על משלוח יום {day} - הכל בסדר?',
+    '{name}, לא נשכח אתכם 😊 רק מוודאים - לסגור הזמנה למשלוח יום {day}?',
+    'היי {name} 👋 עדיין ממתינים לתשובתך על ההזמנה ליום {day}',
+    '{name}, לפני שנסגור את היום - יש הזמנה למשלוח {day}?'
+  ],
   admin_notify_template: [
     '📦 הזמנה אושרה - {name}\n{items}\n🗓️ משלוח: {day}',
     '✅ {name} סגר/ה הזמנה\n{items}\nיום משלוח: {day}',
@@ -471,6 +519,9 @@ function applySettings(s) {
   phones = (s.admin_phones || '').split(',').map(p => p.trim()).filter(p => p);
   renderPhones();
   document.getElementById('reminderDaysBefore').value = s.reminder_days_before || 1;
+  document.getElementById('reminderSendTime').value = s.reminder_send_time || '09:00';
+  document.getElementById('followupSendTime').value = s.followup_send_time || '11:00';
+  document.getElementById('msg_followup').value = s.msg_followup || '';
   document.getElementById('msg_opening').value = s.msg_opening || '';
   document.getElementById('msg_product_prompt').value = s.msg_product_prompt || '';
   document.getElementById('msg_qty_prompt').value = s.msg_qty_prompt || '';
@@ -494,6 +545,9 @@ async function saveSettings() {
   const data = {
     admin_phones: phones.join(','),
     reminder_days_before: document.getElementById('reminderDaysBefore').value,
+    reminder_send_time: document.getElementById('reminderSendTime').value,
+    followup_send_time: document.getElementById('followupSendTime').value,
+    msg_followup: document.getElementById('msg_followup').value,
     msg_opening: document.getElementById('msg_opening').value,
     msg_product_prompt: document.getElementById('msg_product_prompt').value,
     msg_qty_prompt: document.getElementById('msg_qty_prompt').value,
@@ -523,6 +577,41 @@ async function saveSettings() {
 
   btn.disabled = false;
   btn.textContent = 'שמור שינויים';
+}
+
+async function sendBroadcast() {
+  const url = getWebAppUrl();
+  if (!url) { setBroadcastStatus('הדבק קודם את כתובת ה-Web App למעלה', true); return; }
+
+  const day = document.getElementById('broadcastDay').value;
+  const message = document.getElementById('broadcastMessage').value.trim();
+  if (!message) { setBroadcastStatus('כתוב תוכן להודעה קודם', true); return; }
+
+  if (!confirm('לשלוח את ההודעה הזו עכשיו ל' + (day === 'all' ? 'כל הלקוחות הפעילים' : 'לקוחות יום ' + day) + '?')) return;
+
+  setBroadcastStatus('שולח...', false);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'broadcastMessage', data: { day: day, message: message } })
+    });
+    const result = await res.json();
+    if (result.ok) {
+      setBroadcastStatus('נשלח ל-' + result.sent + ' לקוחות' + (result.errors ? (' (' + result.errors + ' שגיאות)') : ''), false);
+    } else {
+      setBroadcastStatus('שגיאה בשליחה', true);
+    }
+  } catch (err) {
+    setBroadcastStatus('שגיאת תקשורת - נסה שוב', true);
+  }
+}
+
+function setBroadcastStatus(text, isError) {
+  const el = document.getElementById('broadcastStatus');
+  el.textContent = text;
+  el.className = 'status-msg' + (isError ? ' error' : '');
+  if (text) setTimeout(() => { el.textContent = ''; }, 6000);
 }
 
 loadSettings();
